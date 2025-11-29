@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini 음성 대화 AI (디버그 모드)</title>
+    <style>
+        body { font-family: sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { width: 90%; max-width: 500px; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); text-align: center; }
+        #chat-box { height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; margin-bottom: 15px; text-align: left; background: #fafafa; }
+        .message { margin: 5px 0; padding: 8px 12px; border-radius: 10px; font-size: 14px; }
+        .user { background: #e3f2fd; color: #1565c0; text-align: right; }
+        .ai { background: #f1f8e9; color: #2e7d32; }
+        .error { background: #ffebee; color: #c62828; font-weight: bold; }
+        .system { color: #888; font-size: 12px; text-align: center; }
+        input { width: 70%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; margin-bottom: 10px; }
+        button { background: #4285F4; color: white; border: none; padding: 12px 24px; border-radius: 50px; cursor: pointer; }
+        button.recording { background: #ea4335; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🛠️ Gemini 디버그 모드</h2>
+    <input type="password" id="api-key" placeholder="Gemini API Key 입력">
+    <div id="chat-box">
+        <div class="system">API 키 입력 후 버튼을 누르세요.</div>
+    </div>
+    <button id="btn-mic">🎤 대화하기</button>
+</div>
+
+<script>
+    const chatBox = document.getElementById('chat-box');
+    const btnMic = document.getElementById('btn-mic');
+    const apiKeyInput = document.getElementById('api-key');
+    let isRecording = false;
+
+    // 로그 출력 함수
+    function log(msg, type = 'system') {
+        const div = document.createElement('div');
+        div.className = `message ${type}`;
+        div.innerText = msg;
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        console.log(`[${type}]`, msg);
+    }
+
+    // 1. 브라우저 및 프로토콜 체크
+    if (window.location.protocol === 'file:') {
+        log("⚠️ 경고: 파일을 직접 열면(file://) 마이크나 API가 차단될 수 있습니다. 로컬 서버(localhost)를 이용해주세요.", 'error');
+    }
+
+    // 2. 음성 인식 설정
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        log("❌ 이 브라우저는 음성 인식을 지원하지 않습니다. 크롬을 사용하세요.", 'error');
+        btnMic.disabled = true;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'ko-KR';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    btnMic.addEventListener('click', () => {
+        if (!apiKeyInput.value) {
+            alert("API Key를 입력해주세요.");
+            return;
+        }
+        if (isRecording) recognition.stop();
+        else {
+            try {
+                recognition.start();
+                log("마이크 켜짐. 말씀하세요...", 'system');
+            } catch (e) {
+                log("❌ 마이크 시작 실패: " + e.message, 'error');
+            }
+        }
+    });
+
+    recognition.onstart = () => {
+        isRecording = true;
+        btnMic.classList.add('recording');
+        btnMic.innerText = "듣고 있어요...";
+    };
+
+    recognition.onend = () => {
+        isRecording = false;
+        btnMic.classList.remove('recording');
+        btnMic.innerText = "🎤 대화하기";
+    };
+
+    recognition.onerror = (event) => {
+        log("❌ 음성 인식 에러: " + event.error, 'error');
+        if (event.error === 'not-allowed') {
+            log("→ 브라우저 주소창 옆의 '자물쇠' 아이콘을 눌러 마이크 권한을 허용해주세요.", 'error');
+        }
+    };
+
+    recognition.onresult = async (event) => {
+        const userText = event.results[0][0].transcript;
+        log(userText, 'user');
+        await fetchGemini(userText);
+    };
+
+    // 3. Gemini API 호출
+    async function fetchGemini(text) {
+        const apiKey = apiKeyInput.value;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+        log("Gemini에게 전송 중...", 'system');
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: text }] }] })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error?.message || response.statusText);
+            }
+
+            const data = await response.json();
+            const aiText = data.candidates[0].content.parts[0].text;
+            
+            log(aiText, 'ai');
+            speak(aiText);
+
+        } catch (error) {
+            log("❌ API 오류: " + error.message, 'error');
+        }
+    }
+
+    function speak(text) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'ko-KR';
+        window.speechSynthesis.speak(u);
+    }
+</script>
+</body>
+</html>
